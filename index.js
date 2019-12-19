@@ -14,24 +14,42 @@
 import React, { Component } from 'react'
 import { View, Dimensions, Platform } from 'react-native'
 import { WebView } from 'react-native-webview'
-import PropTypes from 'prop-types'
 
 const injectedScript = function() {
-  function waitForBridge() {
-    if (window.postMessage.length !== 1) {
-      setTimeout(waitForBridge, 200)
-    } else {
-      postMessage(
-        Math.max(
-          document.documentElement.clientHeight,
-          document.documentElement.scrollHeight,
-          document.body.clientHeight,
-          document.body.scrollHeight
-        )
-      )
-    }
+  function postSize() {
+    //https://stackoverflow.com/questions/1145850/how-to-get-height-of-entire-document-with-javascript
+    var body = document.body,
+      html = document.documentElement
+
+    var maxHeight = Math.max(
+      body.scrollHeight,
+      body.offsetHeight,
+      html.clientHeight,
+      html.scrollHeight,
+      html.offsetHeight
+    )
+
+    console.log('postSize maxHeight', maxHeight)
+    window.ReactNativeWebView.postMessage(maxHeight)
   }
-  waitForBridge()
+
+  var postSizeTimeout
+  function debouncedPostSize() {
+    clearTimeout(postSizeTimeout)
+    postSizeTimeout = setTimeout(function() {
+      postSize()
+    }, 500)
+  }
+
+  debouncedPostSize()
+  //trigger when DOM changes
+  var MutationObserver =
+    window.MutationObserver || window.WebKitMutationObserver
+  var observer = new MutationObserver(debouncedPostSize)
+  observer.observe(document, {
+    subtree: true,
+    attributes: true
+  })
 }
 
 export default class MyWebView extends Component {
@@ -39,13 +57,8 @@ export default class MyWebView extends Component {
     webViewHeight: Number
   }
 
-  static propTypes = {
-    onMessage: PropTypes.func
-  }
-
   static defaultProps = {
-    autoHeight: true,
-    onMessage: () => {}
+    autoHeight: true
   }
 
   constructor(props: Object) {
@@ -58,11 +71,12 @@ export default class MyWebView extends Component {
   }
 
   _onMessage(e) {
-    const { onMessage } = this.props
-    this.setState({
-      webViewHeight: parseInt(e.nativeEvent.data)
-    })
-    onMessage(e)
+    const maxHeight = this.props.maxHeight
+    let webViewHeight = parseInt(e.nativeEvent.data)
+    if (maxHeight && webViewHeight > maxHeight) {
+      webViewHeight = maxHeight
+    }
+    this.setState({ webViewHeight })
   }
 
   stopLoading() {
@@ -78,27 +92,19 @@ export default class MyWebView extends Component {
     const _h = this.props.autoHeight
       ? this.state.webViewHeight
       : this.props.defaultHeight
-    const androidScript =
-      "window.postMessage = String(Object.hasOwnProperty).replace('hasOwnProperty', 'postMessage');" +
-      '(' +
-      String(injectedScript) +
-      ')();'
-    const iosScript =
-      '(' +
-      String(injectedScript) +
-      ')();' +
-      "window.postMessage = String(Object.hasOwnProperty).replace('hasOwnProperty', 'postMessage');"
+    const injectedJavaScript = '(' + String(injectedScript) + ')();'
+
     return (
       <WebView
         ref={ref => {
           this.webview = ref
         }}
-        injectedJavaScript={Platform.OS === 'ios' ? iosScript : androidScript}
+        injectedJavaScript={injectedJavaScript}
         scrollEnabled={this.props.scrollEnabled || false}
+        onMessage={this._onMessage}
         javaScriptEnabled={true}
         automaticallyAdjustContentInsets={true}
         {...this.props}
-        onMessage={this._onMessage}
         style={[{ width: _w }, this.props.style, { height: _h }]}
       />
     )
